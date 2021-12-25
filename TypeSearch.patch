@@ -1,0 +1,82 @@
+diff --git a/src/Microsoft.Diagnostics.ExtensionCommands/ClrMDHelper.cs b/src/Microsoft.Diagnostics.ExtensionCommands/ClrMDHelper.cs
+index 4f6a631c..4b63e538 100644
+--- a/src/Microsoft.Diagnostics.ExtensionCommands/ClrMDHelper.cs
++++ b/src/Microsoft.Diagnostics.ExtensionCommands/ClrMDHelper.cs
+@@ -7,6 +7,8 @@
+ using System;
+ using System.Collections.Generic;
+ using System.Diagnostics;
++using System.IO;
++using System.Linq;
+ using System.Threading.Tasks;
+ 
+ namespace Microsoft.Diagnostics.ExtensionCommands
+@@ -15,12 +17,14 @@ public class ClrMDHelper
+     {
+         private readonly ClrRuntime _clr;
+         private readonly ClrHeap _heap;
++        private readonly (ulong mt, string name, string module)[] _types;
+ 
+         public ClrMDHelper(ClrRuntime clr)
+         {
+             Debug.Assert(clr != null);
+             _clr = clr;
+             _heap = _clr.Heap;
++            _types = LoadTypes(clr).ToArray();
+         }
+ 
+         public ulong GetTaskStateFromAddress(ulong address)
+@@ -1148,5 +1152,53 @@ public bool Is64Bits()
+         {
+             return _clr.DataTarget.DataReader.PointerSize == 8;
+         }
++
++        private static IEnumerable<(ulong mt, string name, string module)> LoadTypes(ClrRuntime runtime)
++        {
++            foreach (var m in runtime.EnumerateModules())
++            {
++                foreach (var (mt, _) in m.EnumerateTypeDefToMethodTableMap())
++                {
++                    var t = runtime.GetTypeByMethodTable(mt);
++                    if (t != null && t.Name != null)
++                    {
++                        yield return (mt, t.Name, Path.GetFileName(m.Name) ?? "");
++                    }
++                }
++            }
++        }
++
++        public IEnumerable<(ulong mt, string name, string module)> FindTypes(string query)
++        {
++            if (string.IsNullOrEmpty(query))
++            {
++                yield break;
++            }
++
++            var queryFunc = GetQueryFunc(query);
++            foreach (var t in _types)
++            {
++                if (queryFunc(t.name))
++                {
++                    yield return t;
++                }
++            }
++        }
++
++        public Func<string, bool> GetQueryFunc (string query)
++        {
++            if (query[0] == '^' && query[query.Length - 1] == '$') {
++                return (string s) => s.Equals(query.Substring(1, query.Length - 2), StringComparison.OrdinalIgnoreCase);
++            }
++            if (query[0] == '^')
++            {
++                return (string s) => s.StartsWith(query.Substring(1), StringComparison.OrdinalIgnoreCase);
++            }
++            if (query[query.Length - 1] == '$')
++            {
++                return (string s) => s.EndsWith(query.Substring(0, query.Length - 1), StringComparison.OrdinalIgnoreCase);
++            }
++            return (string s) => s.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
++        }
+     }
+ }
